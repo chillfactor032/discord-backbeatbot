@@ -57,8 +57,7 @@ class DiscordBotRunner(Thread):
         self.discord_token = discord_token
         self.clock_channel_id = channel_id
         self.bot = None
-        self.runner = asyncio.Runner()
-        self.loop = self.runner.get_loop()
+        self.loop = asyncio.new_event_loop()
         self._stopping = False
         # Register SIGTERM Handler to gracefully exit via KeyboardInterrupt
         signal.signal(signal.SIGTERM, self.signal_handler)
@@ -94,7 +93,7 @@ class DiscordBotRunner(Thread):
     def run(self):
         self.logger.info("Starting BackbeatBot Discord Bot")
         self.bot = DiscordBot(self.discord_token, self.clock_channel_id)
-        self.runner.run(self.bot.start(self.discord_token))
+        self.loop.run_until_complete(self.bot.start(self.discord_token))
 
 class ClockUpdateCog(commands.Cog, name='Clock Update'):
 
