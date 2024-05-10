@@ -1,4 +1,6 @@
 {
     "discord_token": "<DISCORD_TOKEN>",
-    "clock_channel_id": 0
+    "clock_channel_id": 0,
+    "live_channel_id": 0,
+    "admin_user_id": 0
 }
