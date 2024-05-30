@@ -2,5 +2,12 @@
     "discord_token": "<DISCORD_TOKEN>",
     "clock_channel_id": 0,
     "live_channel_id": 0,
-    "admin_user_id": 0
+    "admin_user_id": 0,
+    "record_reactions": [
+        {
+            "channel": "1234",
+            "message": "1234"
+        }
+    ],
+    "record_reactions_file": "/tmp/file.json"
 }

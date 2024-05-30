@@ -33,7 +33,7 @@ class ChannelType(Enum):
         return value in cls._value2member_map_ 
 
 class DiscordBot(commands.Bot):
-    def __init__(self, discord_token, clock_channel_id, live_channel_id, **kwargs):
+    def __init__(self, discord_token, clock_channel_id, live_channel_id, react_channels, react_file, **kwargs):
         intents = discord.Intents.default()
         intents.message_content = True
         super().__init__("!", intents=intents, **kwargs)
@@ -42,6 +42,8 @@ class DiscordBot(commands.Bot):
         self.live_channel_id = live_channel_id
         self.live_channel = None
         self.admin_user_id = kwargs.get("admin_user_id", 0)
+        self.react_channels = react_channels
+        self.react_file = react_file
         self.logger = logging.getLogger(self.__class__.__name__)
 
     async def on_ready(self):
@@ -51,6 +53,8 @@ class DiscordBot(commands.Bot):
         self.logger.info(f"Initial Live Status: {initial_status}")
         await self.add_cog(ClockUpdateCog(self, self.clock_channel_id))
         await self.add_cog(CheckTwitchLiveCog(self, initial_status))
+        if len(self.react_channels) > 0:
+            await self.add_cog(MessageReactsCog(self, self.react_channels, self.react_file))
         self.logger.info("=== BackbeatBot Discord Bot Ready ===")
 
     async def on_message(self, message: discord.Message) -> None:
@@ -100,7 +104,6 @@ class DiscordBot(commands.Bot):
         perms = channel.overwrites_for(everyone_role)
         perms.view_channel = None
         await channel.set_permissions(everyone_role, overwrite=perms, reason="Live!")
-
 
 class CheckTwitchLiveCog(commands.Cog, name='Twitch Live'):
 
@@ -167,15 +170,57 @@ class ClockUpdateCog(commands.Cog, name='Clock Update'):
     def cog_unload(self):
         self.clock_update.cancel()
 
+class MessageReactsCog(commands.Cog, name='Message Reacts'):
+
+    def __init__(self, bot: discord.Client, messages: list, file: str):
+        self.logger = logging.getLogger(self.__class__.__name__)
+        self.bot = bot
+        self.messages = messages
+        self.file = file
+        self.record_reactions.start()
+
+    @tasks.loop(minutes=1.0)
+    async def record_reactions(self):
+        result = {}
+        for msgs in self.messages:
+            users = []
+            try:
+                channel = await self.bot.fetch_channel(msgs["channel"])
+            except Exception as e:
+                self.logger.error(f"Could not fetch channel id [{msgs['channel']}]")
+                self.logger.error(e)
+                continue
+            try:
+                message = await channel.fetch_message(msgs["message"])
+                for reaction in message.reactions:
+                    reactors = [user.name async for user in reaction.users()]
+                    users.extend(reactors)
+            except Exception as e:
+                self.logger.error(f"Could not fetch message [{msgs['message']}]")
+                self.logger.error(e)
+            users = list(set(users))
+            result[msgs["message"]] = users
+        try:
+            with open(self.file, "w") as f:
+                json.dump(result, f)
+        except Exception as e:
+            self.logger.error("Could not write reactions file")
+            self.logger.error(e)
+
+    def cog_unload(self):
+        self.record_reactions.cancel()
+
 
 class DiscordBotRunner(Thread):
 
-    def __init__(self, discord_token, clock_channel_id, live_channel_id, admin_user_id):
+    def __init__(self, discord_token, clock_channel_id, live_channel_id, react_channels, react_file, admin_user_id):
         Thread.__init__(self)
         self.logger = logging.getLogger(self.__class__.__name__)
         self.discord_token = discord_token
         self.clock_channel_id = clock_channel_id
         self.live_channel_id = live_channel_id
+        self.react_channels = react_channels
+        self.react_file = react_file
         self.admin_user_id = admin_user_id
         self.bot = None
         self.loop = asyncio.new_event_loop()
@@ -216,6 +261,8 @@ class DiscordBotRunner(Thread):
         self.bot = DiscordBot(self.discord_token, 
                               self.clock_channel_id, 
                               self.live_channel_id,
+                              self.react_channels,
+                              self.react_file,
                               admin_user_id=self.admin_user_id)
         self.loop.run_until_complete(self.bot.start(self.discord_token))
 
@@ -280,9 +327,14 @@ def main():
             logger.info(f"Config file missing required field: [{field}]. Exiting.")
             return
     
+    react_channels = config.get("record_reactions", [])
+    react_file = config.get("record_reactions_file", None)
+
     bot = DiscordBotRunner(config["discord_token"], 
                            config["clock_channel_id"], 
                            config["live_channel_id"],
+                           react_channels,
+                           react_file, 
                            config.get("admin_user_id", 0))
     
     # Can call bot.run = blocking, bot.start non-blocking
