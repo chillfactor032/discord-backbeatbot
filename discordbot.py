@@ -5,6 +5,7 @@ import json
 from threading import Thread
 from enum import Enum
 from datetime import datetime, timezone
+import time
 import argparse
 import signal
 import requests
@@ -44,6 +45,8 @@ class DiscordBot(commands.Bot):
         self.admin_user_id = kwargs.get("admin_user_id", 0)
         self.react_channels = react_channels
         self.react_file = react_file
+        self.tiktok_username = kwargs.get("tiktok_username", "")
+        self.tiktok_channel_id = kwargs.get("tiktok_channel_id", 0)
         self.logger = logging.getLogger(self.__class__.__name__)
 
     async def on_ready(self):
@@ -55,6 +58,8 @@ class DiscordBot(commands.Bot):
         await self.add_cog(CheckTwitchLiveCog(self, initial_status))
         if len(self.react_channels) > 0:
             await self.add_cog(MessageReactsCog(self, self.react_channels, self.react_file))
+        if len(self.tiktok_username) > 0:
+            await self.add_cog(TikTokLiveCog(self, self.tiktok_username, self.tiktok_channel_id))
         self.logger.info("=== BackbeatBot Discord Bot Ready ===")
 
     async def on_message(self, message: discord.Message) -> None:
@@ -210,10 +215,88 @@ class MessageReactsCog(commands.Cog, name='Message Reacts'):
     def cog_unload(self):
         self.record_reactions.cancel()
 
+class TikTokLiveCog(commands.Cog, name='TikTok Live'):
+
+    def __init__(self, bot: discord.Client, tiktok_username, channel_id):
+        self.logger = logging.getLogger(self.__class__.__name__)
+        self.last_alert_file = ".tiktokalerttime"
+        # 12 hours auto reset time since last notification
+        self.mins_since_alert_threshold = 60 * 12
+        self.bot = bot
+        self.tiktok_username = tiktok_username
+        self.channel = self.bot.get_channel(channel_id)
+        self.url = f"https://www.tiktok.com/api-live/user/room/?aid=1988&uniqueId={self.tiktok_username}&sourceType=54"
+        self.check_live.start()
+
+    @tasks.loop(minutes=1.0)
+    async def check_live(self):
+        now = time.time()
+        last_alert = self.read_last_alert_time()
+        self.mins_since_last_alert = (now - last_alert) / 60
+        self.logger.debug(f"Mins since sent last live notification: {self.mins_since_last_alert}")
+        self.logger.debug(f"Checking online status from tiktok: {self.tiktok_username}")
+        resp = requests.get(self.url)
+        self.logger.debug(f"Live Status HTTP Code: {resp.status_code}")
+        self.logger.debug(resp.text)
+
+        # if its been long enough since the last notification was sent, reset the time
+        if self.mins_since_last_alert > self.mins_since_alert_threshold:
+            self.write_last_alert_time(0)
+
+        if resp.status_code == 200:
+            obj = resp.json()
+            status = None
+            try:
+                status = obj["data"]["liveRoom"]["status"]
+            except KeyError as ke:
+                self.logger.error(f"KeyError Looking for TikTok status")
+                self.logger.error(ke)
+                status = None
+            if status is not None:
+                # If channen is live AND we havent sent an alert already
+                if status != 4:
+                    if self.mins_since_last_alert > self.mins_since_alert_threshold:
+                        self.logger.info(f"TikTok User {self.tiktok_username} is LIVE: Notification Sent")
+                        await self.send_live_alert()
+                        self.write_last_alert_time()
+                    else:
+                        # User is live but we already sent a notification
+                        self.logger.info(f"TikTok User {self.tiktok_username} is LIVE: Notification Already Sent ")
+                        pass
+                else:
+                    self.logger.info(f"TikTok User {self.tiktok_username} is NOT LIVE")
+                    # Reset alert time
+                    self.write_last_alert_time(0)
+            else:
+                self.logger.debug(f"Could not check TikTok Live API due to error")
+
+    def read_last_alert_time(self):
+        last_alert_time = 0
+        if not os.path.isfile(self.last_alert_file):
+            return 0
+        with open(".tiktokalerttime", "r") as f:
+            try:
+                last_alert_time = float(f.read())
+            except ValueError as e:
+                print("Value Error")
+                last_alert_time = 0
+        return last_alert_time
+    
+    def write_last_alert_time(self, alert_time = time.time()):
+        with open(".tiktokalerttime", "w") as f:
+            f.write(str(alert_time))
+
+    async def send_live_alert(self):
+        text = "Mitch is LIVE on TikTok! See you there!\nhttps://tiktok.com/@mitchbruzzese/live"
+        await self.channel.send(text)
+
+    def cog_unload(self):
+        self.check_live.cancel()
+
 
 class DiscordBotRunner(Thread):
 
-    def __init__(self, discord_token, clock_channel_id, live_channel_id, react_channels, react_file, admin_user_id):
+    def __init__(self, discord_token, clock_channel_id, live_channel_id, react_channels, react_file, admin_user_id, tiktok_username, tiktok_channel_id):
         Thread.__init__(self)
         self.logger = logging.getLogger(self.__class__.__name__)
         self.discord_token = discord_token
@@ -222,6 +305,8 @@ class DiscordBotRunner(Thread):
         self.react_channels = react_channels
         self.react_file = react_file
         self.admin_user_id = admin_user_id
+        self.tiktok_username = tiktok_username
+        self.tiktok_channel_id = tiktok_channel_id
         self.bot = None
         self.loop = asyncio.new_event_loop()
         self._stopping = False
@@ -259,11 +344,13 @@ class DiscordBotRunner(Thread):
     def run(self):
         self.logger.info("Starting BackbeatBot Discord Bot")
         self.bot = DiscordBot(self.discord_token, 
-                              self.clock_channel_id, 
-                              self.live_channel_id,
-                              self.react_channels,
-                              self.react_file,
-                              admin_user_id=self.admin_user_id)
+                                self.clock_channel_id, 
+                                self.live_channel_id,
+                                self.react_channels,
+                                self.react_file,
+                                admin_user_id=self.admin_user_id,
+                                tiktok_username=self.tiktok_username,
+                                tiktok_channel_id=self.tiktok_channel_id)
         self.loop.run_until_complete(self.bot.start(self.discord_token))
 
 
@@ -335,7 +422,9 @@ def main():
                            config["live_channel_id"],
                            react_channels,
                            react_file, 
-                           config.get("admin_user_id", 0))
+                           config.get("admin_user_id", 0),
+                           config.get("tiktok_username", ""),
+                           config.get("tiktok_channel_id", 0))
     
     # Can call bot.run = blocking, bot.start non-blocking
     bot.run()

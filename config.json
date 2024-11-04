@@ -9,5 +9,7 @@
             "message": "1234"
         }
     ],
-    "record_reactions_file": "/tmp/file.json"
+    "record_reactions_file": "/tmp/file.json",
+    "tiktok_username": "<TIKTOK_USERNAME>",
+    "tiktok_channel_id": "1234"
 }
