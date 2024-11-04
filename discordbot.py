@@ -256,17 +256,17 @@ class TikTokLiveCog(commands.Cog, name='TikTok Live'):
                 # If channen is live AND we havent sent an alert already
                 if status != 4:
                     if self.mins_since_last_alert > self.mins_since_alert_threshold:
-                        self.logger.info(f"TikTok User {self.tiktok_username} is LIVE: Notification Sent")
+                        self.logger.info(f"TikTok User {self.tiktok_username} went LIVE")
                         await self.send_live_alert()
                         self.write_last_alert_time()
                     else:
                         # User is live but we already sent a notification
-                        self.logger.info(f"TikTok User {self.tiktok_username} is LIVE: Notification Already Sent ")
-                        pass
+                        self.logger.debug(f"TikTok User {self.tiktok_username} is LIVE: Notification Already Sent ")
                 else:
-                    self.logger.info(f"TikTok User {self.tiktok_username} is NOT LIVE")
-                    # Reset alert time
-                    self.write_last_alert_time(0)
+                    if last_alert > 0:
+                        self.logger.info(f"TikTok User {self.tiktok_username} went offline")
+                        # Reset alert time
+                        self.write_last_alert_time(0)   
             else:
                 self.logger.debug(f"Could not check TikTok Live API due to error")
 
