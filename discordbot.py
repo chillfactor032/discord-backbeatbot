@@ -230,64 +230,57 @@ class TikTokLiveCog(commands.Cog, name='TikTok Live'):
 
     @tasks.loop(minutes=1.0)
     async def check_live(self):
-        now = time.time()
-        last_alert = self.read_last_alert_time()
-        self.mins_since_last_alert = (now - last_alert) / 60
-        self.logger.debug(f"Mins since sent last live notification: {self.mins_since_last_alert}")
+        prev_start_time = self.read_last_start_time()
         self.logger.debug(f"Checking online status from tiktok: {self.tiktok_username}")
         resp = requests.get(self.url)
         self.logger.debug(f"Live Status HTTP Code: {resp.status_code}")
         self.logger.debug(resp.text)
-
-        # if its been long enough since the last notification was sent, reset the time
-        if self.mins_since_last_alert > self.mins_since_alert_threshold:
-            self.write_last_alert_time(0)
 
         if resp.status_code == 200:
             obj = resp.json()
             status = None
             try:
                 status = obj["data"]["liveRoom"]["status"]
+                start_time = obj["data"]["liveRoom"]["startTime"]
             except KeyError as ke:
                 self.logger.error(f"KeyError Looking for TikTok status")
                 self.logger.error(ke)
                 status = None
-            if status is not None:
+                start_time = 0
+            if status is not None and start_time is not None:
                 # If channen is live AND we havent sent an alert already
                 if status != 4:
-                    if self.mins_since_last_alert > self.mins_since_alert_threshold:
+                    if start_time != prev_start_time:
                         self.logger.info(f"TikTok User {self.tiktok_username} went LIVE")
                         await self.send_live_alert()
-                        self.write_last_alert_time()
+                        self.write_last_start_time(start_time)
                     else:
                         # User is live but we already sent a notification
                         self.logger.debug(f"TikTok User {self.tiktok_username} is LIVE: Notification Already Sent ")
                 else:
-                    if last_alert > 0:
-                        self.logger.info(f"TikTok User {self.tiktok_username} went offline")
-                        # Reset alert time
-                        self.write_last_alert_time(0)   
+                    # User not live
+                    pass
             else:
                 self.logger.debug(f"Could not check TikTok Live API due to error")
 
-    def read_last_alert_time(self):
-        last_alert_time = 0
+    def read_last_start_time(self):
+        last_start_time = 0
         if not os.path.isfile(self.last_alert_file):
             return 0
         with open(".tiktokalerttime", "r") as f:
             try:
-                last_alert_time = float(f.read())
+                last_start_time = int(f.read())
             except ValueError as e:
                 print("Value Error")
-                last_alert_time = 0
-        return last_alert_time
-    
-    def write_last_alert_time(self, alert_time = time.time()):
+                last_start_time = 0
+        return last_start_time
+
+    def write_last_start_time(self, alert_time):
         with open(".tiktokalerttime", "w") as f:
             f.write(str(alert_time))
 
     async def send_live_alert(self):
-        text = "Mitch is LIVE on TikTok! See you there!\nhttps://tiktok.com/@mitchbruzzese/live"
+        text = "Mitch is live on TikTok now! Join in to catch some awesome beats! <@&1303148537420316693>\nhttps://tiktok.com/@mitchbruzzese/live"
         await self.channel.send(text)
 
     def cog_unload(self):
